@@ -533,6 +533,16 @@ void init_veml6030() {
 // Ligt in LUX
 // Note: sampling time should be > IT -> in this case it has been 100ms by defintion. 
 uint32_t veml6030_read_light() {
+    float ambience;
+    i2c_init(i2c_default, 440);
+    gpio_set_function(DEFAULT_I2C_SCL_PIN, GPIO_FUNC_I2C);
+    gpio_set_function(DEFAULT_I2C_SDA_PIN, GPIO_FUNC_I2C);
+    gpio_pull_up(DEFAULT_I2C_SCL_PIN);
+    gpio_pull_up(DEFAULT_I2C_SDA_PIN);
+    // i2c-viesteille lähetys- ja vastaanottopuskurit
+    uint8_t txBuffer[1]; // Nyt lähetetään yksi tavu
+    uint8_t rxBuffer[2]; // Nyt vastaanotetaan kaksi tavua
+
 
     // Exercise 2: In order to get the luminance we need to read the value of the VEML6030_ALS_REG (see VEML6030 datasheet)
     //            Use functions i2c_write_blocking and i2_read_blocking to collect luminance data.
@@ -543,6 +553,7 @@ uint32_t veml6030_read_light() {
     //            Multiply the value by the adequate value considering Integration Time of 100 ms and Gain of 1/8
     //            using data of page 5 of VEML6030 design application document: https://www.vishay.com/docs/84367/designingveml6030.pdf
     //            Finally, store the value in the variable luxVal_uncorrected.
+
     //
     // Tehtävä 2: Saadaksemme luminanssin meidän tulee lukea VEML6030_ALS_REG -rekisterin arvo (katso VEML6030-datalehti).
     //            Käytä funktioita i2c_write_blocking ja i2_read_blocking luminanssidatan keräämiseen.
