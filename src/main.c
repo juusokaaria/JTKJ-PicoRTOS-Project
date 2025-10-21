@@ -1,20 +1,19 @@
 
 #include <stdio.h>
 #include <string.h>
-
+#include <tusb.h>
 #include <pico/stdlib.h>
-
+#include "usbSerialDebug/helper.h"
 #include <FreeRTOS.h>
 #include <queue.h>
 #include <task.h>
-
 #include "tkjhat/sdk.h"
 
 // Exercise 4. Include the libraries necessaries to use the usb-serial-debug, and tinyusb
 // Tehtävä 4 . Lisää usb-serial-debugin ja tinyusbin käyttämiseen tarvittavat kirjastot.
 
 
-
+#define BUFFER_SIZE     64
 #define DEFAULT_STACK_SIZE 2048
 #define CDC_ITF_TX      1
 
@@ -41,22 +40,22 @@ static void btn_fxn(uint gpio, uint32_t eventMask) {
 static void sensor_task(void *arg){
     (void)arg;
     init_veml6030();
+
     // Tehtävä 2: Alusta valoisuusanturi. Etsi SDK-dokumentaatiosta sopiva funktio.
     // Exercise 2: Init the light sensor. Find in the SDK documentation the adequate function.
    
     for(;;){
-        
         // Tehtävä 2: Muokkaa tästä eteenpäin sovelluskoodilla. Kommentoi seuraava rivi.
         //
         // Exercise 2: Modify with application code here. Comment following line.
         //             Read sensor data and print it out as string; 
         //tight_loop_contents(); 
-        if (programState = WAITING) {
+        if (programState == WAITING) {
             ambientLight = veml6030_read_light();
             programState = DATA_READY;
         }
-        
-   
+         vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 
 
         // Tehtävä 3:  Muokkaa aiemmin Tehtävässä 2 tehtyä koodia ylempänä.
@@ -78,65 +77,52 @@ static void sensor_task(void *arg){
         //printf("sensorTask\n");
 
         // Do not remove this
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
-}
 
-static void print_task(void *arg){
+static void print_task(void *arg) {
     (void)arg;
-    
+    while (!tud_cdc_n_connected(CDC_ITF_TX)) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
     while(1){
-        
-        // Tehtävä 3: Kun tila on oikea, tulosta sensoridata merkkijonossa debug-ikkunaan
-        //            Muista tilamuutos
-        //            Älä unohda kommentoida seuraavaa koodiriviä.
-        // Exercise 3: Print out sensor data as string to debug window if the state is correct
-        //             Remember to modify state
-        //             Do not forget to comment next line of code.
-        tight_loop_contents();
-        programState = WAITING;
+        if (programState == DATA_READY) {
+            uint32_t timestamp = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+            //CDC1
+            if (tud_cdc_n_connected(CDC_ITF_TX)) {
+                char buf[BUFFER_SIZE];
+                snprintf(buf, BUFFER_SIZE, "%lu, %lu\n", timestamp, ambientLight);
+                tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
+                tud_cdc_n_write_flush(CDC_ITF_TX);
+            }
+            //CDC0
+            if (usb_serial_connected()) {
+                char debugBuf[BUFFER_SIZE];
+                snprintf(debugBuf, BUFFER_SIZE, "Lux: %lu\n", ambientLight);
+                usb_serial_print(debugBuf);
+                usb_serial_flush();
+            }
 
-        
-        // Exercise 4. Use the usb_serial_print() instead of printf or similar in the previous line.
-        //             Check the rest of the code that you do not have printf (substitute them by usb_serial_print())
-        //             Use the TinyUSB library to send data through the other serial port (CDC 1).
-        //             You can use the functions at https://github.com/hathach/tinyusb/blob/master/src/class/cdc/cdc_device.h
-        //             You can find an example at hello_dual_cdc
-        //             The data written using this should be provided using csv
-        //             timestamp, luminance
-        // Tehtävä 4. Käytä usb_serial_print()-funktiota printf:n tai vastaavien sijaan edellisellä rivillä.
-        //            Tarkista myös muu koodi ja varmista, ettei siinä ole printf-kutsuja
-        //            (korvaa ne usb_serial_print()-funktiolla).
-        //            Käytä TinyUSB-kirjastoa datan lähettämiseen toisen sarjaportin (CDC 1) kautta.
-        //            Voit käyttää funktioita: https://github.com/hathach/tinyusb/blob/master/src/class/cdc/cdc_device.h
-        //            Esimerkki löytyy hello_dual_cdc-projektista.
-        //            Tällä menetelmällä kirjoitettu data tulee antaa CSV-muodossa:
-        //            timestamp, luminance
+            programState = WAITING;
+        }
 
-
-
-
-        // Exercise 3. Just for sanity check. Please, comment this out
-        // Tehtävä 3: Just for sanity check. Please, comment this out
-        printf("%ld\n", ambientLight);
-        
-        // Do not remove this
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
 
+
 // Exercise 4: Uncomment the following line to activate the TinyUSB library.  
 // Tehtävä 4:  Poista seuraavan rivin kommentointi aktivoidaksesi TinyUSB-kirjaston. 
 
-/*
+
 static void usbTask(void *arg) {
     (void)arg;
     while (1) {
         tud_task();              // With FreeRTOS wait for events
                                  // Do not add vTaskDelay. 
     }
-}*/
+}
 
 int main() {
 
@@ -151,7 +137,7 @@ int main() {
     //             Lisää CMakeLists.txt-tiedostoon cfg-dual-usbcdc
     //             Poista CMakeLists.txt-tiedostosta käytöstä pico_enable_stdio_usb
 
-    stdio_init_all();
+    //stdio_init_all();
 
     // Uncomment this lines if you want to wait till the serial monitor is connected
     /*while (!stdio_usb_connected()){
@@ -182,12 +168,11 @@ int main() {
     // Tehtävä 4: Poista tämän xTaskCreate-rivin kommentointi luodaksesi tehtävän,
     // joka mahdollistaa kaksikanavaisen USB-viestinnän.
 
-    /*
+    
     xTaskCreate(usbTask, "usb", 2048, NULL, 3, &hUSB);
     #if (configNUMBER_OF_CORES > 1)
         vTaskCoreAffinitySet(hUSB, 1u << 0);
     #endif
-    */
 
 
     // Create the tasks with xTaskCreate
@@ -199,7 +184,7 @@ int main() {
                 &hSensorTask);                   // (en) A handle to control the execution of this task
 
     if(result != pdPASS) {
-        printf("Sensor task creation failed\n");
+        usb_serial_print("Sensor task creation failed\n");
         return 0;
     }
     result = xTaskCreate(print_task,  // (en) Task function
@@ -210,14 +195,15 @@ int main() {
                 &hPrintTask);         // (en) A handle to control the execution of this task
 
     if(result != pdPASS) {
-        printf("Print Task creation failed\n");
+        usb_serial_print("Print Task creation failed\n");
         return 0;
     }
-
-    // Start the scheduler (never returns)
+    tusb_init();
+    usb_serial_init();
     vTaskStartScheduler();
     
     // Never reach this line.
     return 0;
 }
+
 

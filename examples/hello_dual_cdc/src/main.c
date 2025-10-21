@@ -43,11 +43,7 @@ static void sensorTask (void *arg){
             vTaskDelay(pdMS_TO_TICKS(50));
     }
 
-    if (usb_serial_connected()) {
-        usb_serial_print("=== Dual CDC Example Started ===\n");
-        usb_serial_print("CDC0: Debug output (this interface)\n");
-        usb_serial_print("CDC1: Sending serial data\n");
-    }
+    
     usb_serial_flush();
 
     while (1) {
