@@ -1,0 +1,35 @@
+//Display morsekoodille
+
+void decode(const char *input) {
+    char buf[2] = {0};
+
+    while (*input) {
+        if (*input == '.' || *input == '-' || *input == ' ') {
+            clear_display();
+
+            if (*input == ' ') {
+                write_text("0");
+            } else {
+                buf[0] = *input;
+                write_text(buf);
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        input++;
+    }
+}
+
+static void display_task(void *arg) {
+    (void)arg;
+
+    init_display();
+    printf("Initializing display\n");
+
+    static char aasi_on[] = ".- .- ... ..  --- -.   "; 
+
+    while(1) {
+        decode(aasi_on);
+    }
+
+}
