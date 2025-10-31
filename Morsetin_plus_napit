@@ -1,0 +1,351 @@
+#include <stdio.h>
+#include <time.h>
+#include <stdlib.h>
+#include <string.h>
+#include <tusb.h>
+#include <pico/stdlib.h>
+#include "usbSerialDebug/helper.h"
+#include <FreeRTOS.h>
+#include <task.h>
+#include "tkjhat/sdk.h"
+
+#define BUFFER_SIZE         64
+#define DEFAULT_STACK_SIZE  2048
+#define CDC_ITF_TX          1
+
+uint32_t ambientLight;
+int rotation_detected = 0;
+
+enum state { WAITING=1,DATA_READY};
+enum state programState = WAITING;
+
+//---------------- Button ----------------
+
+static void btn_fxn(uint gpio, uint32_t eventMask) {
+
+    if (gpio == BUTTON1) {
+
+        gpio_put(RGB_LED_R, false);
+
+        
+
+        clock_t start_time = clock();
+
+        while ((clock() - start_time) < (CLOCKS_PER_SEC * 0.5)) {
+
+
+
+        }
+
+
+
+        gpio_put(RGB_LED_R, true);
+
+    }
+
+    if (gpio == BUTTON2) {
+
+        gpio_put(RGB_LED_G, false);
+
+
+
+        clock_t start_time = clock();
+
+        while ((clock() - start_time) < (CLOCKS_PER_SEC * 0.5)) {
+
+
+
+        }
+
+
+
+        gpio_put(RGB_LED_G, true);
+
+    }
+}
+
+//---------------- Print Task ----------------
+static void print_task(void *arg) {
+    (void)arg;
+    while (!tud_cdc_n_connected(CDC_ITF_TX)) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    while(1){
+        if (programState == DATA_READY) {
+            uint32_t timestamp = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+            //CDC1
+            if (tud_cdc_n_connected(CDC_ITF_TX)) {
+                char buf[BUFFER_SIZE];
+                snprintf(buf, BUFFER_SIZE, "%lu, %lu\n", timestamp, ambientLight);
+                tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
+                tud_cdc_n_write_flush(CDC_ITF_TX);
+            }
+            //CDC0
+            if (usb_serial_connected()) {
+                char debugBuf[BUFFER_SIZE];
+                snprintf(debugBuf, BUFFER_SIZE, "Lux: %lu\n", ambientLight);
+                usb_serial_print(debugBuf);
+                usb_serial_flush();
+            }
+
+            programState = WAITING;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+// ---------------- Sensor ----------------
+
+static void sensor_task(void *arg){
+    (void)arg;
+    init_veml6030();
+
+    // Tehtävä 2: Alusta valoisuusanturi. Etsi SDK-dokumentaatiosta sopiva funktio.
+    // Exercise 2: Init the light sensor. Find in the SDK documentation the adequate function.
+   
+    for(;;){
+        // Tehtävä 2: Muokkaa tästä eteenpäin sovelluskoodilla. Kommentoi seuraava rivi.
+        //
+        // Exercise 2: Modify with application code here. Comment following line.
+        //             Read sensor data and print it out as string; 
+        //tight_loop_contents(); 
+        if (programState == WAITING) {
+            ambientLight = veml6030_read_light();
+            programState = DATA_READY;
+        }
+         vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+// ---------------- IMU ----------------
+
+static void rotation_task(void *arg) {
+
+    (void)arg;
+
+    init_ICM42670();
+
+    ICM42670_startGyro(100, 500);
+
+    ICM42670_start_with_default_values();
+
+
+
+    float ax, ay, az, bx, by, bz, t;
+
+
+
+    int ligth_on = 0;
+
+
+
+    float last_x = 0.0f;
+
+    float last_y = 0.0f;
+
+    float last_z = 0.0f;
+
+
+
+    //ICM42670_read_sensor_data(&ax, &ay, &az, &bx, &by, &bz, &t);
+
+
+
+    for (;;) {
+
+        printf("looping\n");
+
+
+
+        if (ICM42670_read_sensor_data(&ax, &ay, &az, &bx, &by, &bz, &t) == 0) {
+
+            printf("%d\n", bx);
+
+            if ((bx - last_x > 5 || bx - last_x < -5) && ligth_on == 0) {
+
+                rotation_detected = 1;
+
+                ligth_on = 1;
+
+                gpio_put(RGB_LED_B, false);
+
+                sleep_ms(500);
+
+                gpio_put(RGB_LED_B, true);
+
+                ligth_on = 0;
+
+                printf("pass\n");
+
+            }
+
+
+
+            //printf("last_x: %.2f, bx: %.2f, diff: %.2f\n", last_x, bx, bx - last_x);
+
+            last_x = bx;
+
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        //sleep_ms(10);
+
+    }
+
+}
+
+// ---------------- Morse Display + USB Output ----------------
+void decode(const char *input) {
+    char buf[2] = {0};
+
+    while (*input) {
+        if (*input == '.' || *input == '-' || *input == ' ') {
+            clear_display();
+
+            if (*input == ' ') {
+                write_text("0");
+            } else {
+                buf[0] = *input;
+                write_text(buf);
+            }
+
+            // --- Send Morse symbol over dual USB ---
+            if (tud_cdc_n_connected(CDC_ITF_TX)) {
+                tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
+                tud_cdc_n_write_flush(CDC_ITF_TX);
+            }
+
+            if (usb_serial_connected()) {
+                usb_serial_print(buf);
+                usb_serial_flush();
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        input++;
+    }
+
+    // Newline after full message
+    if (tud_cdc_n_connected(CDC_ITF_TX)) {
+        tud_cdc_n_write(CDC_ITF_TX, "\n", 1);
+        tud_cdc_n_write_flush(CDC_ITF_TX);
+    }
+    if (usb_serial_connected()) {
+        usb_serial_print("\n");
+        usb_serial_flush();
+    }
+}
+
+static void display_task(void *arg) {
+    (void)arg;
+
+    init_display();
+    printf("Initializing display\n");
+
+    static char morse_message[] = ".- .- ... ..  --- -.   "; // "AASI ON"
+
+    while (1) {
+        decode(morse_message);
+    }
+}
+
+// ---------------- TinyUSB Task ----------------
+static void usbTask(void *arg) {
+    (void)arg;
+    while (1) {
+        tud_task();  // Keep TinyUSB running
+    }
+}
+
+// ---------------- Main ----------------
+int main(void) {
+    // stdio_init_all(); // Not used with TinyUSB dual CDC
+
+    init_hat_sdk();
+    sleep_ms(300);  // Wait for HAT and USB init
+
+    // Initialize button + LED
+    gpio_init(BUTTON1);
+
+    gpio_set_dir(BUTTON1, GPIO_IN);
+
+
+
+    gpio_init(BUTTON2);
+
+    gpio_set_dir(BUTTON2, GPIO_IN);
+
+
+
+    gpio_init(LED1);
+
+    gpio_set_dir(LED1, GPIO_OUT);
+
+
+
+    gpio_init(RGB_LED_R);
+
+    gpio_set_dir(RGB_LED_R, GPIO_OUT);
+
+
+
+    gpio_init(RGB_LED_G);
+
+    gpio_set_dir(RGB_LED_G, GPIO_OUT);
+
+
+
+    gpio_init(RGB_LED_B);
+
+    gpio_set_dir(RGB_LED_B, GPIO_OUT);
+
+
+
+    gpio_put(RGB_LED_G, true);
+
+    gpio_put(RGB_LED_R, true);
+
+    gpio_put(RGB_LED_B, true);
+
+
+
+    //keskeytys
+
+    gpio_set_irq_enabled_with_callback(BUTTON1, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
+
+    gpio_set_irq_enabled_with_callback(BUTTON2, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
+
+
+    //keskeytys
+
+    gpio_set_irq_enabled_with_callback(BUTTON1, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
+
+    gpio_set_irq_enabled_with_callback(BUTTON2, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
+
+    TaskHandle_t hUSB = NULL, hDisplay = NULL, hPrintTask = NULL, hRotationTask = NULL;
+
+    // Create TinyUSB service task
+    xTaskCreate(usbTask, "usb", 2048, NULL, 3, &hUSB);
+
+    // Create Morse display task
+    xTaskCreate(display_task, "display", 2048, NULL, 2, &hDisplay);
+
+    // Create printTask
+    xTaskCreate(print_task, "print", DEFAULT_STACK_SIZE, NULL, 2, &hPrintTask);
+
+    //Create rotationTask
+    xTaskCreate(rotation_task, "rotation", DEFAULT_STACK_SIZE, NULL, 2, &hRotationTask);
+
+    // Initialize dual USB communication
+    tusb_init();
+    usb_serial_init();
+
+    // Start FreeRTOS scheduler
+    vTaskStartScheduler();
+
+    // Never reached
+    return 0;
+}
