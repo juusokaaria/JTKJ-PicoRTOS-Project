@@ -1,0 +1,179 @@
+#include <stdio.h>
+#include <string.h>
+#include <tusb.h>
+#include <pico/stdlib.h>
+#include "usbSerialDebug/helper.h"
+#include <FreeRTOS.h>
+#include <task.h>
+#include "tkjhat/sdk.h"
+
+#define BUFFER_SIZE         64
+#define DEFAULT_STACK_SIZE  2048
+#define CDC_ITF_TX          1
+
+uint32_t ambientLight;
+
+enum state { WAITING=1,DATA_READY};
+enum state programState = WAITING;
+
+// Simple LED toggle handler
+static void btn_fxn(uint gpio, uint32_t eventMask) {
+    uint8_t pinValue = gpio_get(LED1);
+    pinValue = !pinValue;
+    gpio_put(LED1, pinValue);
+}
+
+//---------------- Print Task ----------------
+static void print_task(void *arg) {
+    (void)arg;
+    while (!tud_cdc_n_connected(CDC_ITF_TX)) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    while(1){
+        if (programState == DATA_READY) {
+            uint32_t timestamp = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+            //CDC1
+            if (tud_cdc_n_connected(CDC_ITF_TX)) {
+                char buf[BUFFER_SIZE];
+                snprintf(buf, BUFFER_SIZE, "%lu, %lu\n", timestamp, ambientLight);
+                tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
+                tud_cdc_n_write_flush(CDC_ITF_TX);
+            }
+            //CDC0
+            if (usb_serial_connected()) {
+                char debugBuf[BUFFER_SIZE];
+                snprintf(debugBuf, BUFFER_SIZE, "Lux: %lu\n", ambientLight);
+                usb_serial_print(debugBuf);
+                usb_serial_flush();
+            }
+
+            programState = WAITING;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+// ---------------- Sensor ----------------
+
+static void sensor_task(void *arg){
+    (void)arg;
+    init_veml6030();
+
+    // Tehtävä 2: Alusta valoisuusanturi. Etsi SDK-dokumentaatiosta sopiva funktio.
+    // Exercise 2: Init the light sensor. Find in the SDK documentation the adequate function.
+   
+    for(;;){
+        // Tehtävä 2: Muokkaa tästä eteenpäin sovelluskoodilla. Kommentoi seuraava rivi.
+        //
+        // Exercise 2: Modify with application code here. Comment following line.
+        //             Read sensor data and print it out as string; 
+        //tight_loop_contents(); 
+        if (programState == WAITING) {
+            ambientLight = veml6030_read_light();
+            programState = DATA_READY;
+        }
+         vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+// ---------------- Morse Display + USB Output ----------------
+void decode(const char *input) {
+    char buf[2] = {0};
+
+    while (*input) {
+        if (*input == '.' || *input == '-' || *input == ' ') {
+            clear_display();
+
+            if (*input == ' ') {
+                write_text("0");
+            } else {
+                buf[0] = *input;
+                write_text(buf);
+            }
+
+            // --- Send Morse symbol over dual USB ---
+            if (tud_cdc_n_connected(CDC_ITF_TX)) {
+                tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
+                tud_cdc_n_write_flush(CDC_ITF_TX);
+            }
+
+            if (usb_serial_connected()) {
+                usb_serial_print(buf);
+                usb_serial_flush();
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        input++;
+    }
+
+    // Newline after full message
+    if (tud_cdc_n_connected(CDC_ITF_TX)) {
+        tud_cdc_n_write(CDC_ITF_TX, "\n", 1);
+        tud_cdc_n_write_flush(CDC_ITF_TX);
+    }
+    if (usb_serial_connected()) {
+        usb_serial_print("\n");
+        usb_serial_flush();
+    }
+}
+
+static void display_task(void *arg) {
+    (void)arg;
+
+    init_display();
+    printf("Initializing display\n");
+
+    static char morse_message[] = ".- .- ... ..  --- -.   "; // "AASI ON"
+
+    while (1) {
+        decode(morse_message);
+    }
+}
+
+// ---------------- TinyUSB Task ----------------
+static void usbTask(void *arg) {
+    (void)arg;
+    while (1) {
+        tud_task();  // Keep TinyUSB running
+    }
+}
+
+// ---------------- Main ----------------
+int main(void) {
+    // stdio_init_all(); // Not used with TinyUSB dual CDC
+
+    init_hat_sdk();
+    sleep_ms(300);  // Wait for HAT and USB init
+
+    // Initialize button + LED
+    gpio_init(BUTTON1);
+    gpio_set_dir(BUTTON1, GPIO_IN);
+    gpio_set_irq_enabled_with_callback(BUTTON1, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
+
+    gpio_init(LED1);
+    gpio_set_dir(LED1, GPIO_OUT);
+
+    TaskHandle_t hUSB = NULL, hDisplay = NULL, hPrintTask = NULL;
+
+    // Create TinyUSB service task
+    xTaskCreate(usbTask, "usb", 2048, NULL, 3, &hUSB);
+
+    // Create Morse display task
+    xTaskCreate(display_task, "display", 2048, NULL, 2, &hDisplay);
+
+    // Create printTask
+    xTaskCreate(print_task, "print", DEFAULT_STACK_SIZE, NULL, 2, &hPrintTask);
+
+    // Initialize dual USB communication
+    tusb_init();
+    usb_serial_init();
+
+    // Start FreeRTOS scheduler
+    vTaskStartScheduler();
+
+    // Never reached
+    return 0;
+}
