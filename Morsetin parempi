@@ -242,6 +242,17 @@ static void rotation_task(void *arg) {
 
 // Morse Transmitter 
 void transmitter() {
+    char message[] = "aasi";
+    while (1) {
+    if (tud_cdc_n_connected(CDC_ITF_TX)) {
+        tud_cdc_n_write(CDC_ITF_TX, message, strlen(message));
+        tud_cdc_n_write_flush(CDC_ITF_TX);
+        
+        clear_display();
+        write_text(message);
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 }
 
 // Morse Receiver 
@@ -271,6 +282,7 @@ void receiver() {
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
+}
 
 // Display 
 
@@ -281,7 +293,6 @@ static void display_task(void *arg) {
     printf("Initializing display\n");
 
     while (1) {
-        transmitter();
         receiver();
     }
 }
@@ -302,10 +313,6 @@ int main(void) {
 
     init_hat_sdk();
     sleep_ms(300);  // Wait for HAT and USB init
-
-    // Initialize dual USB communication
-    tusb_init();
-    usb_serial_init();
     
     // Initialize button + LED
     gpio_init(BUTTON1);
@@ -384,6 +391,10 @@ int main(void) {
 
     //Create rotationTask
     xTaskCreate(rotation_task, "rotation", DEFAULT_STACK_SIZE, NULL, 2, &hRotationTask);
+
+    // Initialize dual USB communication
+    tusb_init();
+    usb_serial_init();
 
     // Start FreeRTOS scheduler
     vTaskStartScheduler();
