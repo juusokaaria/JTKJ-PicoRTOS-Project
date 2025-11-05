@@ -12,9 +12,15 @@
 #define BUFFER_SIZE         64
 #define DEFAULT_STACK_SIZE  2048
 #define CDC_ITF_TX          1
+#define THRESHOLD           70.0
+#define RESET_THRESHOLD     10.0
+
+//global variables
 
 uint32_t ambientLight;
+int ligth_on = 0;
 int rotation_detected = 0;
+char message[BUFFER_SIZE] = "";
 
 enum state { WAITING=1,DATA_READY};
 enum state programState = WAITING;
@@ -27,20 +33,20 @@ static void btn_fxn(uint gpio, uint32_t eventMask) {
 
         gpio_put(RGB_LED_R, false);
 
-        
-
         clock_t start_time = clock();
 
         while ((clock() - start_time) < (CLOCKS_PER_SEC * 0.5)) {
 
-
-
         }
-
-
 
         gpio_put(RGB_LED_R, true);
 
+        // Append '-' to the message
+        size_t len = strlen(message);
+        if (len < BUFFER_SIZE - 1) {
+        message[len] = '-';
+        message[len + 1] = '\0';
+        }
     }
 
     if (gpio == BUTTON2) {
@@ -61,39 +67,46 @@ static void btn_fxn(uint gpio, uint32_t eventMask) {
 
         gpio_put(RGB_LED_G, true);
 
+         // Append '.' to the message
+        size_t len = strlen(message);
+        if (len < BUFFER_SIZE - 1) {
+        message[len] = ' ';
+        message[len + 1] = '\0';
+        }
+    
     }
 }
 
 // Print Task 
 static void print_task(void *arg) {
-    (void)arg;
-    while (!tud_cdc_n_connected(CDC_ITF_TX)) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
+    // (void)arg;
+    // while (!tud_cdc_n_connected(CDC_ITF_TX)) {
+    //     vTaskDelay(pdMS_TO_TICKS(50));
+    // }
 
-    while(1){
-        if (programState == DATA_READY) {
-            uint32_t timestamp = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-            //CDC1
-            if (tud_cdc_n_connected(CDC_ITF_TX)) {
-                char buf[BUFFER_SIZE];
-                snprintf(buf, BUFFER_SIZE, "%lu, %lu\n", timestamp, ambientLight);
-                tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
-                tud_cdc_n_write_flush(CDC_ITF_TX);
-            }
-            //CDC0
-            if (usb_serial_connected()) {
-                char debugBuf[BUFFER_SIZE];
-                snprintf(debugBuf, BUFFER_SIZE, "Lux: %lu\n", ambientLight);
-                usb_serial_print(debugBuf);
-                usb_serial_flush();
-            }
+    // while(1){
+    //     if (programState == DATA_READY) {
+    //         uint32_t timestamp = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    //         //CDC1
+    //         if (tud_cdc_n_connected(CDC_ITF_TX)) {
+    //             char buf[BUFFER_SIZE];
+    //             snprintf(buf, BUFFER_SIZE, "%lu, %lu\n", timestamp, ambientLight);
+    //             tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
+    //             tud_cdc_n_write_flush(CDC_ITF_TX);
+    //         }
+    //         //CDC0
+    //         if (usb_serial_connected()) {
+    //             char debugBuf[BUFFER_SIZE];
+    //             snprintf(debugBuf, BUFFER_SIZE, "Lux: %lu\n", ambientLight);
+    //             usb_serial_print(debugBuf);
+    //             usb_serial_flush();
+    //         }
 
-            programState = WAITING;
-        }
+    //         programState = WAITING;
+    //     }
 
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
+    //     vTaskDelay(pdMS_TO_TICKS(500));
+    // }
 }
 
 // Sensor 
@@ -137,15 +150,15 @@ static void rotation_task(void *arg) {
 
 
 
-    int ligth_on = 0;
+    //int ligth_on = 0;
 
 
 
-    float last_x = 0.0f;
-
-    float last_y = 0.0f;
-
-    float last_z = 0.0f;
+    float last_x = 0;
+    float last_z = 0;
+    int light_on = 0;
+    int triggered_x = 0;
+    int triggered_z = 0;
 
 
 
@@ -154,45 +167,63 @@ static void rotation_task(void *arg) {
 
 
     for (;;) {
-
         printf("looping\n");
 
+        ICM42670_read_sensor_data(&ax, &ay, &az, &bx, &by, &bz, &t);
+
+        float diff_x = bx - last_x;
+        float diff_z = bz - last_z;
 
 
-        if (ICM42670_read_sensor_data(&ax, &ay, &az, &bx, &by, &bz, &t) == 0) {
+        //--------------------x
+        if (!triggered_x && (diff_x > THRESHOLD || diff_x < -THRESHOLD) && !triggered_z) {
+            light_on = 1;
+            triggered_x = 1;
 
-            printf("%d\n", bx);
+            gpio_put(RGB_LED_B, false);
+            gpio_put(RGB_LED_R, false);
+            sleep_ms(1000);
+            gpio_put(RGB_LED_B, true);
+            gpio_put(RGB_LED_R, true);
 
-            if ((bx - last_x > 5 || bx - last_x < -5) && ligth_on == 0) {
-
-                rotation_detected = 1;
-
-                ligth_on = 1;
-
-                gpio_put(RGB_LED_B, false);
-
-                sleep_ms(500);
-
-                gpio_put(RGB_LED_B, true);
-
-                ligth_on = 0;
-
-                printf("pass\n");
-
-            }
-
-
-
-            //printf("last_x: %.2f, bx: %.2f, diff: %.2f\n", last_x, bx, bx - last_x);
-
-            last_x = bx;
-
+            printf("pass\n");
+            
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Reset trigger when movement settles
+        if (triggered_x && (diff_x < RESET_THRESHOLD && diff_x > -RESET_THRESHOLD)) {
+            triggered_x = 0;
+        }
 
-        //sleep_ms(10);
 
+
+        //---------------------z
+        if (!triggered_z && (diff_z > THRESHOLD || diff_z < -THRESHOLD) && !triggered_x) {
+            light_on = 1;
+            triggered_z = 1;
+
+            gpio_put(RGB_LED_B, false);
+            gpio_put(RGB_LED_G, false);
+            sleep_ms(1000);
+            gpio_put(RGB_LED_B, true);
+            gpio_put(RGB_LED_G, true);
+
+            printf("pass\n");
+            
+        }
+
+        // Reset trigger when movement settles
+        if (triggered_z && (diff_z < RESET_THRESHOLD && diff_z > -RESET_THRESHOLD)) {
+            triggered_z = 0;
+        }
+
+
+
+
+        last_x = bx;
+        last_z = bz;
+
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 
 }
@@ -242,14 +273,12 @@ static void rotation_task(void *arg) {
 
 // Morse Transmitter 
 void transmitter() {
-    char message[] = "aasi";
     while (1) {
     if (tud_cdc_n_connected(CDC_ITF_TX)) {
         tud_cdc_n_write(CDC_ITF_TX, message, strlen(message));
         tud_cdc_n_write_flush(CDC_ITF_TX);
-        
-        clear_display();
-        write_text(message);
+        // Go back to sleep
+        programState = WAITING;
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -279,10 +308,10 @@ void receiver() {
                 tud_cdc_n_write_flush(CDC_ITF_TX);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-}
+
 
 // Display 
 
@@ -293,7 +322,8 @@ static void display_task(void *arg) {
     printf("Initializing display\n");
 
     while (1) {
-        receiver();
+        clear_display();
+        write_text(message);
     }
 }
 
@@ -378,7 +408,7 @@ int main(void) {
     xTaskCreate(usbTask, "usb", DEFAULT_STACK_SIZE, NULL, 3, &hUSB);
 
     // Create Morse Transmitter task
-    xTaskCreate(transmitter, "transmitter", DEFAULT_STACK_SIZE, NULL, 3, &hTransmitter);
+    xTaskCreate(transmitter, "transmitter", DEFAULT_STACK_SIZE, NULL, 2, &hTransmitter);
 
     // Create Morse Transmitter task
     xTaskCreate(receiver, "receiver", DEFAULT_STACK_SIZE, NULL, 3, &hReceiver);
