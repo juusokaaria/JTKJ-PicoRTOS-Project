@@ -1,3 +1,4 @@
+#include "tkjhat/sdk.h"
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 #include "tkjhat/sdk.h"
+#include <math.h>
 
 #define BUFFER_SIZE         64
 #define DEFAULT_STACK_SIZE  2048
@@ -16,7 +18,7 @@
 #define RESET_THRESHOLD     10.0
 #define BUZZER_PIN 17
 
-//global variables
+// global variables
 TaskHandle_t hUSB = NULL, hDisplay = NULL, hPrintTask = NULL, hRotationTask = NULL, hTransmitter = NULL, hReceiver = NULL, hBuzzer = NULL;
 uint32_t ambientLight;
 int ligth_on = 0;
@@ -27,56 +29,48 @@ char message[BUFFER_SIZE] = "";
 
 QueueHandle_t buzzerQueue = NULL;
 
-enum state { WAITING=1,DATA_READY};
+enum state { WAITING = 1, DATA_READY };
 enum state programState = WAITING;
 
 // Button 
-
 void btn_fxn(uint gpio, uint32_t eventMask) {
     if (gpio == BUTTON1) {
-
         gpio_put(RGB_LED_R, false);
-
         clock_t start_time = clock();
-
-        while ((clock() - start_time) < (CLOCKS_PER_SEC * 0.5)) {
-
-        }
-
+        while ((clock() - start_time) < (CLOCKS_PER_SEC * 0.5)) {}
         gpio_put(RGB_LED_R, true);
 
         // Append '-' to the message
         size_t len = strlen(message);
         if (len < BUFFER_SIZE - 1) {
-        message[len] = '-';
-        message[len + 1] = '\0';
+            message[len] = '-';
+            message[len + 1] = '\0';
+            consecutiveSpaces = 0; // reset
         }
     }
 
     if (gpio == BUTTON2) {
         gpio_put(RGB_LED_G, false);
         clock_t start_time = clock();
-        while ((clock() - start_time) < (CLOCKS_PER_SEC * 0.5)) {
-        }
+        while ((clock() - start_time) < (CLOCKS_PER_SEC * 0.5)) {}
         gpio_put(RGB_LED_G, true);
 
-         // Append '.' to the message
+        // Append '.' to the message
         size_t len = strlen(message);
         if (len < BUFFER_SIZE - 1) {
-        message[len] = ' ';
-        message[len + 1] = '\0';
+            message[len] = ' ';
+            message[len + 1] = '\0';
         }
 
-    // Count spaces
+        // Count spaces
         consecutiveSpaces++;
         if (consecutiveSpaces >= 3) {
             consecutiveSpaces = 0; // reset
-
             // Append '\n' to the message
             size_t len = strlen(message);
             if (len < BUFFER_SIZE - 1) {
-            message[len] = '\n';
-            message[len + 1] = '\0';
+                message[len] = '\n';
+                message[len + 1] = '\0';
             }
 
             // Wake up transmitter
@@ -84,300 +78,153 @@ void btn_fxn(uint gpio, uint32_t eventMask) {
                 BaseType_t xHigherPriorityTaskWoken = pdFALSE;
                 vTaskNotifyGiveFromISR(hTransmitter, &xHigherPriorityTaskWoken);
                 portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-
             }
         }
     }
 }
-// Print Task 
-static void print_task(void *arg) {
-    // (void)arg;
-    // while (!tud_cdc_n_connected(CDC_ITF_TX)) {
-    //     vTaskDelay(pdMS_TO_TICKS(50));
-    // }
-
-    // while(1){
-    //     if (programState == DATA_READY) {
-    //         uint32_t timestamp = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-    //         //CDC1
-    //         if (tud_cdc_n_connected(CDC_ITF_TX)) {
-    //             char buf[BUFFER_SIZE];
-    //             snprintf(buf, BUFFER_SIZE, "%lu, %lu\n", timestamp, ambientLight);
-    //             tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
-    //             tud_cdc_n_write_flush(CDC_ITF_TX);
-    //         }
-    //         //CDC0
-    //         if (usb_serial_connected()) {
-    //             char debugBuf[BUFFER_SIZE];
-    //             snprintf(debugBuf, BUFFER_SIZE, "Lux: %lu\n", ambientLight);
-    //             usb_serial_print(debugBuf);
-    //             usb_serial_flush();
-    //         }
-
-    //         programState = WAITING;
-    //     }
-
-    //     vTaskDelay(pdMS_TO_TICKS(500));
-    // }
-}
-
-// Sensor 
-
-static void sensor_task(void *arg){
-    (void)arg;
-    init_veml6030();
-
-    // Tehtävä 2: Alusta valoisuusanturi. Etsi SDK-dokumentaatiosta sopiva funktio.
-    // Exercise 2: Init the light sensor. Find in the SDK documentation the adequate function.
-   
-    for(;;){
-        // Tehtävä 2: Muokkaa tästä eteenpäin sovelluskoodilla. Kommentoi seuraava rivi.
-        //
-        // Exercise 2: Modify with application code here. Comment following line.
-        //             Read sensor data and print it out as string; 
-        //tight_loop_contents(); 
-        if (programState == WAITING) {
-            ambientLight = veml6030_read_light();
-            programState = DATA_READY;
-        }
-         vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
 
 // IMU 
-
 static void rotation_task(void *arg) {
-
     (void)arg;
+    float ax, ay, az, gx, gy, gz, t;
 
-    init_ICM42670();
-
-    ICM42670_startGyro(100, 500);
-
-    ICM42670_start_with_default_values();
-
-
-
-    float ax, ay, az, bx, by, bz, t;
-
-
-
-    //int ligth_on = 0;
-
-
-
-    float last_x = 0;
-    float last_z = 0;
-    int light_on = 0;
-    int triggered_x = 0;
-    int triggered_z = 0;
-
-
-
-    //ICM42670_read_sensor_data(&ax, &ay, &az, &bx, &by, &bz, &t);
-
-
-
-    for (;;) {
-        printf("looping\n");
-
-        ICM42670_read_sensor_data(&ax, &ay, &az, &bx, &by, &bz, &t);
-
-        float diff_x = bx - last_x;
-        float diff_z = bz - last_z;
-
-
-        //--------------------x
-        if (!triggered_x && (diff_x > THRESHOLD || diff_x < -THRESHOLD) && !triggered_z) {
-            light_on = 1;
-            triggered_x = 1;
-
-            gpio_put(RGB_LED_B, false);
-            gpio_put(RGB_LED_R, false);
-            sleep_ms(1000);
-            gpio_put(RGB_LED_B, true);
-            gpio_put(RGB_LED_R, true);
-
-            printf("pass\n");
-            
+    // Setting up the sensor.
+    if (init_ICM42670() == 0) {
+        usb_serial_print("ICM-42670P initialized successfully!\n");
+        if (ICM42670_start_with_default_values() != 0) {
+            usb_serial_print("ICM-42670P could not initialize accelerometer or gyroscope");
         }
-
-        // Reset trigger when movement settles
-        if (triggered_x && (diff_x < RESET_THRESHOLD && diff_x > -RESET_THRESHOLD)) {
-            triggered_x = 0;
-        }
-
-
-
-        //---------------------z
-        if (!triggered_z && (diff_z > THRESHOLD || diff_z < -THRESHOLD) && !triggered_x) {
-            light_on = 1;
-            triggered_z = 1;
-
-            gpio_put(RGB_LED_B, false);
-            gpio_put(RGB_LED_G, false);
-            sleep_ms(1000);
-            gpio_put(RGB_LED_B, true);
-            gpio_put(RGB_LED_G, true);
-
-            printf("pass\n");
-            
-        }
-
-        // Reset trigger when movement settles
-        if (triggered_z && (diff_z < RESET_THRESHOLD && diff_z > -RESET_THRESHOLD)) {
-            triggered_z = 0;
-        }
-
-
-
-
-        last_x = bx;
-        last_z = bz;
-
-        vTaskDelay(pdMS_TO_TICKS(20));
+    } else {
+        usb_serial_print("Failed to initialize ICM-42670P.\n");
     }
 
+    // Start collection data here. Infinite loop.
+    uint8_t buf[BUFFER_SIZE];
+
+    while (1) {
+        if (ICM42670_read_sensor_data(&ax, &ay, &az, &gx, &gy, &gz, &t) == 0) {
+            // Detect acceleration by comparing IMU values to a threshold
+            if (fabs(ax) > 0.8 ) { // Threshold for detecting rotation
+                usb_serial_print("Acceleration detected!\n");
+
+                // Append '-' to the message array
+                size_t len = strlen(message);
+                if (len < BUFFER_SIZE - 1) {
+                    message[len] = '-'; // Append the line
+                    message[len + 1] = '\0';
+                    consecutiveSpaces = 0; // reset
+                }
+            }
+            // Detect rotation by comparing IMU values to a threshold
+            if (fabs(gx) > 50) { // Threshold for detecting rotation
+                usb_serial_print("Rotation detected!\n");
+
+                // Append '.' to the message array
+                size_t len = strlen(message);
+                if (len < BUFFER_SIZE - 1) {
+                    message[len] = '.'; // Append the dot
+                    message[len + 1] = '\0';
+                    consecutiveSpaces = 0; // reset
+                }
+            }
+            sprintf(buf, "Accel: X=%.2f, Y=%.2f, Z=%.2f | Gyro: X=%.2f, Y=%.2f, Z=%.2f | Temp: %2.2f°C\n", ax, ay, az, gx, gy, gz, t);
+            usb_serial_print(buf);
+        } else {
+            usb_serial_print("Failed to read imu data\n");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500)); // Delay to avoid overwhelming the system
+    }
 }
-
-// Morse Transmitter 
-// void transmitter(const char *input) {
-//     char buf[2] = {0};
-
-//     while (*input) {
-//         if (*input == '.' || *input == '-' || *input == ' ') {
-//             clear_display();
-
-//             if (*input == ' ') {
-//                 buf[0] = '0';
-//             } else {
-//                 buf[0] = *input;
-//             }
-            
-//             write_text(buf);
-
-//             // --- Send Morse symbols over dual USB ---
-//             if (tud_cdc_n_connected(CDC_ITF_TX)) {
-//                 tud_cdc_n_write(CDC_ITF_TX, buf, strlen(buf));
-//                 tud_cdc_n_write_flush(CDC_ITF_TX);
-//             }
-
-//             if (usb_serial_connected()) {
-//                 usb_serial_print(buf);
-//                 usb_serial_flush();
-//             }
-
-//             vTaskDelay(pdMS_TO_TICKS(500));
-//         }
-//         input++;
-//     }
-
-//     // Newline after full message
-//     if (tud_cdc_n_connected(CDC_ITF_TX)) {
-//         tud_cdc_n_write(CDC_ITF_TX, "\n", 1);
-//         tud_cdc_n_write_flush(CDC_ITF_TX);
-//     }
-//     if (usb_serial_connected()) {
-//         usb_serial_print("\n");
-//         usb_serial_flush();
-//     }
-// }
 
 // Morse Transmitter 
 void transmitter() {
     while (1) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (tud_cdc_n_connected(CDC_ITF_TX)) {
+            tud_cdc_n_write(CDC_ITF_TX, message, strlen(message));
+            tud_cdc_n_write_flush(CDC_ITF_TX);
+            // Go back to sleep
+            programState = WAITING;
+        }
 
-    if (tud_cdc_n_connected(CDC_ITF_TX)) {
-        tud_cdc_n_write(CDC_ITF_TX, message, strlen(message));
-        tud_cdc_n_write_flush(CDC_ITF_TX);
-        // Go back to sleep
-        programState = WAITING;
-    }
-    // After sending full message, play this tone
-    xQueueSend(buzzerQueue, &(int){2}, 0);
-    // Reset message buffer
-    message[0] = '\0';
+        // After sending full message, play this tone
+        xQueueSend(buzzerQueue, &(int){2}, 0);
+
+        // Reset message buffer
+        memset(message, 0, sizeof(message));
     }
 }
 
 // Morse Receiver 
 void receiver() {
-
     uint8_t buf[CFG_TUD_CDC_RX_BUFSIZE + 1];
+
     while (1) {
         if (tud_cdc_n_connected(CDC_ITF_TX)) {
             uint32_t count = tud_cdc_n_read(CDC_ITF_TX, buf, sizeof(buf) - 1);
             buf[count] = '\0'; // null terminate
+
             if (count > 0) {
-            // Echo to debug console (CDC0)
-            usb_serial_print((char *)buf);
-            // usb_serial_print("\n");
-            usb_serial_flush();
+                // Echo to debug console (CDC0)
+                usb_serial_print((char *)buf);
+                usb_serial_flush();
 
-            // Optionally: display received Morse
-            clear_display();
-            write_text((char *)buf);
+                // Optionally: display received Morse
+                clear_display();
+                write_text((char *)buf);
 
-            // Send ACK back to sender
-            tud_cdc_n_write(CDC_ITF_TX, (char *)buf, count);
-            tud_cdc_n_write_flush(CDC_ITF_TX);
-            
-            // After receiving the message hear this sound;
-            xQueueSend(buzzerQueue, &(int){1}, 0);
+                // Send ACK back to sender
+                tud_cdc_n_write(CDC_ITF_TX, (char *)buf, count);
+                tud_cdc_n_write_flush(CDC_ITF_TX);
+
+                // After receiving the message hear this sound;
+                xQueueSend(buzzerQueue, &(int){1}, 0);
             }
         }
-    vTaskDelay(pdMS_TO_TICKS(20));
-    }
 
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
 }
 
 // Display 
+// static void display_task() {
+//     init_display();
+//     while (1) {
+//         clear_display();
+//         char last_sent[] = "";
+//         last_sent[0] = message[strlen(message) - 1];
+//         write_text(last_sent);
+//     }
+// }
 
-static void display_task() {
-
-    init_display();
-    
-    while (1) {
-        clear_display();
-
-        char last_sent[] = "";
-        last_sent[0] = message[strlen(message) - 1];
-
-        write_text(last_sent);
-
-    }
-}
-//Buzzer
-
- static void buzzer_task(void *arg) {
-     (void)arg;
-    //Initialize the buzzer
+// Buzzer
+static void buzzer_task(void *arg) {
+    (void)arg;
+    // Initialize the buzzer
     init_buzzer();
     int toneCode;
     printf("Initializing buzzer\n");
 
-    while(1){
+    while (1) {
         if (xQueueReceive(buzzerQueue, &toneCode, portMAX_DELAY)) {
             switch (toneCode) {
-                case 1: //transmission sound
+                case 1: // transmission sound
                     buzzer_play_tone(440, 500);
                     vTaskDelay(pdMS_TO_TICKS(500));
-                    buzzer_play_tone (494, 500);
+                    buzzer_play_tone(494, 500);
                     break;
-                case 2: //receiver sound
-                    buzzer_play_tone (523, 250);
+                case 2: // receiver sound
+                    buzzer_play_tone(523, 250);
                     vTaskDelay(pdMS_TO_TICKS(500));
-                    buzzer_play_tone (500, 250);
+                    buzzer_play_tone(500, 250);
                     break;
             }
         }
-
     }
-}  
+}
 
-// TinyUSB Task 
-
+// TinyUSB Task
 static void usbTask(void *arg) {
     (void)arg;
     while (1) {
@@ -385,70 +232,32 @@ static void usbTask(void *arg) {
     }
 }
 
-// Main 
-
+// Main
 int main(void) {
     // stdio_init_all(); // Not used with TinyUSB dual CDC
-
     init_hat_sdk();
     sleep_ms(300);  // Wait for HAT and USB init
     buzzerQueue = xQueueCreate(5, sizeof(int));
+
     // Initialize button + LED
     gpio_init(BUTTON1);
-
     gpio_set_dir(BUTTON1, GPIO_IN);
-
-
-
     gpio_init(BUTTON2);
-
     gpio_set_dir(BUTTON2, GPIO_IN);
-
-
-
     gpio_init(LED1);
-
     gpio_set_dir(LED1, GPIO_OUT);
-
-
-
     gpio_init(RGB_LED_R);
-
     gpio_set_dir(RGB_LED_R, GPIO_OUT);
-
-
-
     gpio_init(RGB_LED_G);
-
     gpio_set_dir(RGB_LED_G, GPIO_OUT);
-
-
-
     gpio_init(RGB_LED_B);
-
     gpio_set_dir(RGB_LED_B, GPIO_OUT);
-
-
-
     gpio_put(RGB_LED_G, true);
-
     gpio_put(RGB_LED_R, true);
-
     gpio_put(RGB_LED_B, true);
 
-
-
-    //keskeytys
-
+    // Button Interrupts
     gpio_set_irq_enabled_with_callback(BUTTON1, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
-
-    gpio_set_irq_enabled_with_callback(BUTTON2, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
-
-
-    //keskeytys
-
-    gpio_set_irq_enabled_with_callback(BUTTON1, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
-
     gpio_set_irq_enabled_with_callback(BUTTON2, GPIO_IRQ_EDGE_FALL, true, btn_fxn);
 
     // Create TinyUSB service task
@@ -457,27 +266,44 @@ int main(void) {
     // Create Morse Transmitter task
     xTaskCreate(transmitter, "transmitter", DEFAULT_STACK_SIZE, NULL, 2, &hTransmitter);
 
-    // Create Morse Transmitter task
+    // Create Morse Receiver task
+
+
     xTaskCreate(receiver, "receiver", DEFAULT_STACK_SIZE, NULL, 3, &hReceiver);
 
-    // Create Morse display task
-    xTaskCreate(display_task, "display", DEFAULT_STACK_SIZE, NULL, 2, &hDisplay);
 
-    // Create printTask
-    xTaskCreate(print_task, "print", DEFAULT_STACK_SIZE, NULL, 2, &hPrintTask);
+
+    // Create Morse display task
+
+    //xTaskCreate(display_task, "display", DEFAULT_STACK_SIZE, NULL, 2, &hDisplay);
+
+
 
     //Create rotationTask
+
     xTaskCreate(rotation_task, "rotation", DEFAULT_STACK_SIZE, NULL, 2, &hRotationTask);
 
+
+
     // Create buzzer task
+
     xTaskCreate(buzzer_task, "buzzer", DEFAULT_STACK_SIZE, NULL, 2, &hBuzzer);
+
     // Initialize dual USB communication
+
     tusb_init();
+
     usb_serial_init();
 
+
+
     // Start FreeRTOS scheduler
+
     vTaskStartScheduler();
 
+
+
     // Never reached
+
     return 0;
 }
