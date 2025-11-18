@@ -31,7 +31,6 @@ enum state programState = WRITING;
 
 // Button 
 void buttonTask(uint gpio, uint32_t eventMask) {
-    init_led();
 
     // estetään kirjoitus vastaanoton aikana
     if (programState == RECEIVING){
