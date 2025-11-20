@@ -16,7 +16,7 @@
 #define CDC_ITF_TX          1
 
 // Globaalit muuttujat
-TaskHandle_t hUSB = NULL, hRotationTask = NULL, hTransmitter = NULL, hBuzzer = NULL;
+TaskHandle_t hUSB = NULL, hRotationTask = NULL, hTransmitter = NULL, hBuzzer = NULL, hMusic = NULL;
 QueueHandle_t buzzerQueue = NULL;
 int consecutiveSpaces = 0;
 int rotation_first = 0;
@@ -85,11 +85,6 @@ void buttonTask(uint gpio, uint32_t eventMask) {
 static void rotation_task(void *arg) {
     (void)arg;
 
-    // estetään kirjoitus vastaanoton aikana
-    if (programState == RECEIVING){
-        return; 
-    }
-
     float ax, ay, az, gx, gy, gz, t;
     // Alustus 
     if (init_ICM42670() == 0) {
@@ -104,6 +99,12 @@ static void rotation_task(void *arg) {
     uint8_t buf[BUFFER_SIZE];
     
     while (1) {
+        // estetään kirjoitus vastaanoton aikana
+        if (programState == RECEIVING){
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+            }
+
         if (ICM42670_read_sensor_data(&ax, &ay, &az, &gx, &gy, &gz, &t) == 0 && programState == WRITING) {
 
             // Kiihtymisen havainnointi
@@ -252,11 +253,53 @@ static void buzzer_task(void *arg) {
                     vTaskDelay(pdMS_TO_TICKS(500));
                     buzzer_play_tone(500, 250);
                     break;
+
+                case 3: // Musiikki
+                    {
+                        // "Super Mario Bros. theme" -melodia
+                        // Melodia nuotit tämän sivuston avulla: 
+                        // https://theorycircuit.com/esp32-projects/super-mario-melody-tone-using-esp32-and-buzzer/
+                        
+                        int notes[] = {440, 440, 0, 440, 0, 349, 440, 0, 523, 0};
+
+                        int durations[] = {80, 80, 80, 80, 80, 80, 80, 80, 40, 40};
+
+                        int len = sizeof(notes) / sizeof(notes[0]);
+
+                        for (int i = 0; i < len; i++) {
+                            buzzer_play_tone(notes[i], durations[i]);
+                            vTaskDelay(pdMS_TO_TICKS(50));
+                        }
+                    }
+                    break;
             }
         }
     }
 }
 
+static void music_task(void *arg) {
+    (void)arg;
+
+    
+    while (1) {
+        // Estetään musiikkia soimasta vastaanoton aikana
+        if (programState == RECEIVING){
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+            }
+        
+
+        if (programState == WRITING){
+        // Odota 30 sekuntia
+        vTaskDelay(pdMS_TO_TICKS(30000));
+
+        // Soita musiikkia
+        xQueueSend(buzzerQueue, &(int){3}, 0);
+
+        usb_serial_print("Played music!\n");
+        }
+    }
+}
 
 static void usbTask(void *arg) {
     (void)arg;
@@ -290,6 +333,7 @@ int main(){
     xTaskCreate(usbTask, "usb", DEFAULT_STACK_SIZE, NULL, 3, &hUSB);
     xTaskCreate(rotation_task, "rotation", DEFAULT_STACK_SIZE, NULL, 2, &hRotationTask);
     xTaskCreate(buzzer_task, "buzzer", DEFAULT_STACK_SIZE, NULL, 2, &hBuzzer);
+    xTaskCreate(music_task, "music", DEFAULT_STACK_SIZE, NULL, 2, &hMusic);
 
     //Debugaamista varten
     tusb_init();
